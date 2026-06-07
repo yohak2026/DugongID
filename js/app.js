@@ -122,6 +122,10 @@ const App = (() => {
             <select id="region-select">${Matching.REGIONS.map(r => `<option value="${r}">${esc(Matching.REGION_LABELS[r] || r)}</option>`).join('')}</select></div>
           <div class="field"><label>Markers placed: <span id="marker-count">0</span></label></div>
           <button class="btn btn-primary" style="width:100%;justify-content:center" data-act="match" disabled id="btn-match">Compare to catalog</button>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" data-act="undo" id="btn-undo" disabled>↩ Undo</button>
+            <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" data-act="redo" id="btn-redo" disabled>↪ Redo</button>
+          </div>
           <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:8px" data-act="clear">Clear markers</button>
         </div>
       </div>`;
@@ -150,10 +154,16 @@ const App = (() => {
 
     identify = { mediaId: null, mediaURL: null, markers: [], ranked: [] };
     const canvas = $('#annot-canvas', main);
+    const syncHistoryButtons = () => {
+      const u = $('#btn-undo', main), r = $('#btn-redo', main);
+      if (u) u.disabled = !Annotator.canUndo();
+      if (r) r.disabled = !Annotator.canRedo();
+    };
     Annotator.init(canvas, (markers) => {
       identify.markers = markers;
       $('#marker-count', main).textContent = markers.length;
       $('#btn-match', main).disabled = markers.length === 0;
+      syncHistoryButtons();
     });
 
     $('#photo-input', main).onchange = async (e) => {
@@ -167,6 +177,8 @@ const App = (() => {
       } catch (err) { toast(err.message || 'Could not load photo'); }
     };
     main.querySelector('[data-act="clear"]').onclick = () => Annotator.clear();
+    main.querySelector('[data-act="undo"]').onclick = () => Annotator.undo();
+    main.querySelector('[data-act="redo"]').onclick = () => Annotator.redo();
     main.querySelector('[data-act="match"]').onclick = () => runMatch(main);
   }
 
@@ -289,7 +301,8 @@ const App = (() => {
     const cover = ind.coverMediaId ? await DB.getMediaURL(ind.coverMediaId) : null;
     const modal = el(`<div class="modal-bg"><div class="modal">
       <div class="modal-head"><h2 style="margin:0">${esc(ind.code || 'Unnamed')}</h2>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" data-act="add-photo">+ Add photo</button>
           <button class="btn btn-ghost btn-sm" data-act="pdf">Export PDF</button>
           <button class="btn btn-ghost btn-sm" data-act="edit">Edit</button>
           <button class="btn btn-ghost btn-sm" data-act="close">Close</button></div></div>
@@ -317,15 +330,142 @@ const App = (() => {
     for (const s of sights) {
       const thumbs = [];
       for (const mid of (s.mediaIds || [])) { const u = await DB.getMediaURL(mid); if (u) thumbs.push(`<div class="m"><img src="${u}"></div>`); }
+      const markSummary = s.markers?.length ? summariseMarks(s.markers) : '';
       sl.appendChild(el(`<div class="match-row" style="flex-direction:column;align-items:stretch">
         <div><b>${esc(s.date || 'undated')}</b> ${s.location ? `· ${esc(s.location)}` : ''} ${s.behaviour ? `· ${esc(s.behaviour)}` : ''} · ${s.markers?.length || 0} marks</div>
+        ${markSummary ? `<div style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:2px">${esc(markSummary)}</div>` : ''}
         ${thumbs.length ? `<div class="media-grid" style="margin-top:8px">${thumbs.join('')}</div>` : ''}</div>`));
     }
     const close = () => modal.remove();
     modal.querySelector('[data-act="close"]').onclick = close;
     modal.onclick = (e) => { if (e.target === modal) close(); };
     modal.querySelector('[data-act="edit"]').onclick = () => { close(); editIndividual(id); };
+    modal.querySelector('[data-act="add-photo"]').onclick = () => { close(); addPhotoToIndividual(id); };
     modal.querySelector('[data-act="pdf"]').onclick = async () => { toast('Generating PDF…'); await PDFReport.individualProfile(ind, await DB.getAll('sightings')); };
+  }
+
+  // ---------------- ADD PHOTO + MARKINGS TO AN EXISTING INDIVIDUAL ----------------
+  // Reusable marking modal: lets the observer add another photo to an individual,
+  // mark its own distinguishing features, and save it as a new dated sighting.
+  async function addPhotoToIndividual(individualId) {
+    const ind = await DB.get('individuals', individualId);
+    const today = new Date().toISOString().slice(0, 10);
+    let mediaId = null, mediaURL = null, markers = [];
+    const modal = el(`<div class="modal-bg"><div class="modal">
+      <div class="modal-head"><h2 style="margin:0">Add photo — ${esc(ind.code || 'Unnamed')}</h2>
+        <button class="btn btn-ghost btn-sm" data-act="close">Close</button></div>
+      <div class="modal-body">
+        <div class="row">
+          <div class="field"><label>Date</label><input type="date" id="ap-date" value="${today}"></div>
+          <div class="field"><label>Sighting location</label><select id="ap-locode">
+            <option value="">—</option>
+            ${Matching.SIGHTING_LOCATIONS.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
+        </div>
+        <div class="field"><label>Behaviour</label><input type="text" id="ap-beh" placeholder="feeding, resting, travelling, with calf"></div>
+        <div class="annot-wrap">
+          <div>
+            <div class="panel" style="margin-bottom:var(--space-3)">
+              <div class="canvas-box" id="ap-box">
+                <div class="canvas-empty" id="ap-empty">
+                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 16l5-5 4 4 3-3 6 6"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                  <div><b>Add this sighting's photo</b><br><span style="font-size:var(--text-sm);color:var(--color-text-muted)">Each photo keeps its own markings</span></div>
+                  <label class="btn btn-primary">Choose photo<input type="file" accept="image/*" id="ap-input" hidden></label>
+                </div>
+                <canvas id="ap-canvas" style="display:none"></canvas>
+              </div>
+              <p style="font-size:var(--text-xs);color:var(--color-text-muted);margin-top:8px">Click to drop a marker. Right-click (or long-press) to remove one.</p>
+            </div>
+          </div>
+          <div class="marker-tools panel">
+            <div class="field"><label>Marker type</label><div class="tool-list" id="ap-type-list"></div></div>
+            <div class="field"><label>Body region</label>
+              <select id="ap-region">${Matching.REGIONS.map(r => `<option value="${r}">${esc(Matching.REGION_LABELS[r] || r)}</option>`).join('')}</select></div>
+            <div class="field"><label>Markers placed: <span id="ap-count">0</span></label></div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" data-act="undo" id="ap-undo" disabled>↩ Undo</button>
+              <button class="btn btn-ghost btn-sm" style="flex:1;justify-content:center" data-act="redo" id="ap-redo" disabled>↪ Redo</button>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;margin-top:8px" data-act="clear">Clear markers</button>
+            <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:var(--text-xs);color:var(--color-text-muted)"><input type="checkbox" id="ap-cover" style="width:auto"> Use as cover photo</label>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:var(--space-4)"><button class="btn btn-primary" data-act="save" id="ap-save" disabled>Save sighting</button></div>
+      </div></div></div>`);
+    document.body.appendChild(modal);
+
+    // build marker-type list (same grouping as Identify)
+    const tl = modal.querySelector('#ap-type-list');
+    let first = true;
+    ['permanent', 'long', 'short'].forEach(perm => {
+      const p = Matching.PERMANENCE[perm];
+      const entries = Object.entries(Matching.MARKER_TYPES).filter(([, m]) => m.permanence === perm);
+      if (!entries.length) return;
+      tl.appendChild(el(`<div class="perm-head perm-${perm}">${esc(p.label)} <span>· ${esc(p.note)}</span></div>`));
+      entries.forEach(([key, m]) => {
+        const b = el(`<button data-type="${key}" class="${first ? 'active' : ''}" title="${esc(m.hint)}">
+          <span class="swatch" style="background:${m.color}"></span><span>${esc(m.label)}</span></button>`);
+        b.onclick = () => { [...tl.querySelectorAll('button')].forEach(x => x.classList.remove('active')); b.classList.add('active'); Annotator.setActiveType(key); };
+        tl.appendChild(b); first = false;
+      });
+    });
+    Annotator.setActiveType('fluke_notch');
+    const regionSel = modal.querySelector('#ap-region');
+    regionSel.value = 'fluke_center'; Annotator.setActiveRegion('fluke_center');
+    regionSel.onchange = (e) => Annotator.setActiveRegion(e.target.value);
+
+    const canvas = modal.querySelector('#ap-canvas');
+    const syncHist = () => {
+      const u = modal.querySelector('#ap-undo'), r = modal.querySelector('#ap-redo');
+      u.disabled = !Annotator.canUndo(); r.disabled = !Annotator.canRedo();
+    };
+    Annotator.init(canvas, (m) => {
+      markers = m;
+      modal.querySelector('#ap-count').textContent = m.length;
+      modal.querySelector('#ap-save').disabled = !mediaId;
+      syncHist();
+    });
+
+    modal.querySelector('#ap-input').onchange = async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        mediaId = await DB.saveMedia(file, 'photo');
+        mediaURL = await DB.getMediaURL(mediaId);
+        modal.querySelector('#ap-empty').style.display = 'none';
+        canvas.style.display = 'block';
+        await Annotator.loadImage(mediaURL);
+        modal.querySelector('#ap-save').disabled = false;
+      } catch (err) { toast(err.message || 'Could not load photo'); }
+    };
+    modal.querySelector('[data-act="clear"]').onclick = () => Annotator.clear();
+    modal.querySelector('[data-act="undo"]').onclick = () => Annotator.undo();
+    modal.querySelector('[data-act="redo"]').onclick = () => Annotator.redo();
+    const close = () => modal.remove();
+    modal.querySelector('[data-act="close"]').onclick = close;
+    modal.onclick = (e) => { if (e.target === modal) close(); };
+
+    modal.querySelector('[data-act="save"]').onclick = async () => {
+      if (!mediaId) { toast('Add a photo first'); return; }
+      const date = modal.querySelector('#ap-date').value || today;
+      const sighting = {
+        id: crypto.randomUUID(), individualId, date,
+        locCode: modal.querySelector('#ap-locode').value,
+        behaviour: modal.querySelector('#ap-beh').value.trim(),
+        location: '', notes: '',
+        mediaIds: [mediaId], markers, createdAt: Date.now()
+      };
+      await DB.put('sightings', sighting);
+      ind.updatedAt = Date.now();
+      if (!ind.lastSeen || date > ind.lastSeen) ind.lastSeen = date;
+      if (!ind.firstSeen || date < ind.firstSeen) ind.firstSeen = date;
+      if (modal.querySelector('#ap-cover').checked || !ind.coverMediaId) ind.coverMediaId = mediaId;
+      // refresh the aggregated marks summary across ALL the animal's sightings
+      const all = await DB.getByIndex('sightings', 'individualId', individualId);
+      const merged = [];
+      all.forEach(ss => (ss.markers || []).forEach(mk => merged.push(mk)));
+      ind.marksSummary = summariseMarks(merged);
+      await DB.put('individuals', ind);
+      close(); toast(`Photo added to ${ind.code}`); openIndividual(individualId);
+    };
   }
 
   // ---------------- EDIT INDIVIDUAL ----------------

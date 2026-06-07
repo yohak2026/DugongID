@@ -10,6 +10,13 @@ const Annotator = (() => {
   let activeRegion = 'fluke_center';
   let onChange = () => {};
   let zoom = 1, panX = 0, panY = 0;
+  // Undo / redo history — snapshots of the marker list.
+  let undoStack = [];
+  let redoStack = [];
+
+  function snapshot() { return markers.map(x => ({ ...x })); }
+  function pushHistory() { undoStack.push(snapshot()); redoStack = []; }
+  function resetHistory() { undoStack = []; redoStack = []; }
 
   function init(canvasEl, changeCb) {
     canvas = canvasEl;
@@ -22,6 +29,7 @@ const Annotator = (() => {
   function loadImage(url) {
     return new Promise((resolve) => {
       markers = [];          // start each photo with a clean marker set
+      resetHistory();
       onChange(getMarkers()); // keep the UI counter / match button in sync
       img = new Image();
       img.onload = () => { fit(); draw(); resolve(); };
@@ -29,7 +37,7 @@ const Annotator = (() => {
     });
   }
 
-  function setMarkers(m) { markers = (m || []).map(x => ({ ...x })); draw(); }
+  function setMarkers(m) { markers = (m || []).map(x => ({ ...x })); resetHistory(); draw(); onChange(getMarkers()); }
   function getMarkers() { return markers.map(x => ({ ...x })); }
   function setActiveType(t) { activeType = t; }
   function setActiveRegion(r) { activeRegion = r; }
@@ -47,6 +55,7 @@ const Annotator = (() => {
     const rect = canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
+    pushHistory();
     markers.push({
       id: crypto.randomUUID(), type: activeType, region: activeRegion,
       x: +x.toFixed(4), y: +y.toFixed(4), note: ''
@@ -66,8 +75,25 @@ const Annotator = (() => {
       const d = Math.hypot(m.x - x, m.y - y);
       if (d < best) { best = d; nearest = i; }
     });
-    if (nearest >= 0) { markers.splice(nearest, 1); draw(); onChange(getMarkers()); }
+    if (nearest >= 0) { pushHistory(); markers.splice(nearest, 1); draw(); onChange(getMarkers()); }
   }
+
+  function undo() {
+    if (!undoStack.length) return false;
+    redoStack.push(snapshot());
+    markers = undoStack.pop();
+    draw(); onChange(getMarkers());
+    return true;
+  }
+  function redo() {
+    if (!redoStack.length) return false;
+    undoStack.push(snapshot());
+    markers = redoStack.pop();
+    draw(); onChange(getMarkers());
+    return true;
+  }
+  function canUndo() { return undoStack.length > 0; }
+  function canRedo() { return redoStack.length > 0; }
 
   function draw() {
     if (!ctx) return;
@@ -90,9 +116,9 @@ const Annotator = (() => {
     });
   }
 
-  function clear() { markers = []; draw(); onChange(getMarkers()); }
+  function clear() { if (markers.length) pushHistory(); markers = []; draw(); onChange(getMarkers()); }
 
   window.addEventListener('resize', () => { fit(); draw(); });
 
-  return { init, loadImage, setMarkers, getMarkers, setActiveType, setActiveRegion, clear, draw };
+  return { init, loadImage, setMarkers, getMarkers, setActiveType, setActiveRegion, clear, draw, undo, redo, canUndo, canRedo };
 })();
