@@ -30,9 +30,12 @@ marks per individual.
 ## Features
 
 - **Identify** — upload a dorsal/fluke photo, drop markers on distinguishing features, and
-  compare against your catalog to find the most likely match.
+  compare against your catalog to find the most likely match. **Undo / Redo** while marking.
 - **Individuals catalog** — one profile per dugong: code/name, status, age class, sex,
   distinguishing marks, behaviour & character, conservation notes, and full sighting history.
+- **Multiple photos per individual** — add as many photos as you like to one animal. Each
+  photo is saved as its own dated sighting and **keeps its own markings** (the scientifically
+  correct model). The profile aggregates marks across every photo.
 - **Observations log** — record sightings with date, location, behaviour, and attach
   **photos, videos, and PDF field notes**.
 - **PDF export** — generate a clean ID profile sheet for any individual.
@@ -40,7 +43,8 @@ marks per individual.
   IndexedDB.
 - **Backup & share** — export your entire catalog to a single JSON file (photos included)
   for safekeeping or to share with teammates; import it on any device.
-- **Light & dark mode.**
+- **Light & dark mode** — YOHAK El Nido brand theme (terracotta accent, warm sand / deep
+  teal-black ocean, Fraunces editorial serif headlines).
 
 ---
 
@@ -109,7 +113,7 @@ DugongID/
 ├── index.html              # App shell
 ├── manifest.webmanifest    # PWA manifest
 ├── sw.js                   # Service worker (offline cache)
-├── css/style.css           # Ocean/conservation theme
+├── css/style.css           # YOHAK El Nido brand theme (light & dark)
 ├── js/
 │   ├── db.js               # IndexedDB data layer + export/import
 │   ├── matching.js         # Computer-assisted matching engine
@@ -141,8 +145,44 @@ Presider of outputs) using a credit-conserving escalation ladder. See
 
 ---
 
+## Sharing this project with another editor / teammate
+
+This repo is the **app code**, not your field data. There are two separate things to share:
+
+### 1. Share the code (for collaborators / another editor)
+
+The project is on GitHub:
+
+```bash
+git clone https://github.com/yohak2026/DugongID.git
+cd DugongID
+python3 -m http.server 8099
+```
+
+Then open **http://localhost:8099**. Pull the latest anytime with `git pull`.
+A zipped snapshot (`DugongID-project.zip`) can also be handed over directly if GitHub
+access isn't available.
+
+### 2. Share your catalog data (individuals + photos)
+
+Your dugong records live only in the browser on the device where you entered them.
+To move them to another device or share with a teammate:
+
+1. In the app, open **Overview → Export backup**. This downloads a single
+   `dugongid-backup-YYYY-MM-DD.json` file containing **all individuals, sightings, and
+   embedded photos**.
+2. On the other device (after cloning + running the app), open
+   **Overview → Import backup** and select that file. Everything is restored.
+
+> **Important:** running the app on a new computer starts with an *empty* catalog. The code
+> and the data are independent — always export a backup before switching devices, and keep
+> backups somewhere safe (the JSON can be committed to a private repo or stored in cloud
+> storage of your choice).
+
+---
+
 ## License
 
 Open source for conservation use. See repository for details.
 
-🌊 Built for dugong conservation.
+🌊 Built for dugong conservation in El Nido, Palawan.
