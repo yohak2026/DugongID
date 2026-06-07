@@ -1,6 +1,6 @@
 /* DugongID service worker — caches the app shell so it runs fully offline.
    User data lives in IndexedDB (not here) and is never uploaded. */
-const CACHE = 'dugongid-v2';
+const CACHE = 'dugongid-v3';
 const ASSETS = [
   './', './index.html', './css/style.css',
   './js/db.js', './js/matching.js', './js/annotator.js', './js/pdf.js', './js/app.js',
